@@ -7,15 +7,15 @@ import (
 	"github.com/garyburd/redigo/redis"
 )
 
-func BenchmarkSetStr(b *testing.B) {
+func BenchmarkSetRedisStr(b *testing.B) {
 	c, err := redis.Dial("tcp", "127.0.0.1:6379")
 	if err != nil {
 		fmt.Println("connect to redis error", err)
 	}
 
-	insertDataToRedis(c, 0, 1000)
+	insertDataToRedis(c, 0, 8192)
 
-	for i := 0; i <= 1000; i++ {
+	for i := 0; i <= 8192; i++ {
 		c.Do("GET", string(i))
 	}
 
@@ -24,8 +24,7 @@ func BenchmarkSetStr(b *testing.B) {
 
 func insertDataToRedis(c redis.Conn, start, end int) {
 	for i := start; i <= end; i++ {
-		_, err := c.Do("SET", string(i), 1000)
-
+		_, err := c.Do("SET", string(i), 1000, "EX", "5")
 		if err != nil {
 			fmt.Println("redis set failed:", err)
 		}

@@ -1,7 +1,10 @@
 package simplecachesys
 
 import (
+	"container/list"
 	"fmt"
+	"math/rand"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +25,12 @@ type entry struct {
 	val        interface{} // 存入值
 }
 
+// LRUList LRU链表，用于内存溢出后处理不常用变量
+type LRUList struct {
+	m sync.Mutex
+	l list.List
+}
+
 // Cache接口的简单实现
 type syncMapCacheImpl struct {
 	// 最大内存
@@ -30,17 +39,58 @@ type syncMapCacheImpl struct {
 	// 存放数据
 	data sync.Map
 
+	// LRU 淘汰策略存储的map
+	lruList LRUList
+
 	// 记录key数量
 	keys int64
 }
 
-// InitSyncMapCacheImpl 初始化Cache实现类
-func InitSyncMapCacheImpl() syncMapCacheImpl {
+// KeyUp 提升制定键的临时优先级
+func (lru *LRUList) KeyUp(key interface{}) {
+	lru.m.Lock()
+	// 遍历链表查找我们所需要的key
+	e := lru.l.Front()
+	for ; e != nil; e = e.Next() {
+		if e.Value == key {
+			break
+		}
+	}
+	if e == nil {
+		lru.l.PushFront(key)
+	} else {
+		// 将当前key向前移动
+		lru.l.MoveToFront(e)
+	}
 
-	return syncMapCacheImpl{
-		memorySize: 1 * MB,
+	lru.m.Unlock()
+}
+
+// RemoveBack 删除最后一个元素
+func (lru *LRUList) RemoveBack() interface{} {
+	// 上锁
+	lru.m.Lock()
+	// defer - 延迟解锁
+	defer lru.m.Unlock()
+	lastEle := lru.l.Back()
+	// 判断是否为空
+	if lastEle == nil {
+		return nil
+	}
+	// 返回删除的key
+	return lru.l.Remove(lastEle)
+}
+
+// InitSyncMapCacheImpl 初始化Cache实现类
+func InitSyncMapCacheImpl() *syncMapCacheImpl {
+	smcc := syncMapCacheImpl{
+		memorySize: 500 * MB,
 		data:       sync.Map{},
 	}
+
+	go smcc.randomVerifyExpireVar()
+
+	return &smcc
 }
 
 // SetMaxMemory 设置最大内存
@@ -80,7 +130,10 @@ func (smcc *syncMapCacheImpl) SetMaxMemory(size string) bool {
 func (smcc *syncMapCacheImpl) Set(key string, val interface{}, expire time.Duration) {
 
 	// TODO 判断是否超出内存。
-
+	flag := smcc.memoryhandle()
+	if !flag {
+		panic("当前值超出设定最大内存")
+	}
 	// 记录unix时间戳
 	unix := time.Now().Add(expire).Unix()
 	void := entry{
@@ -89,7 +142,8 @@ func (smcc *syncMapCacheImpl) Set(key string, val interface{}, expire time.Durat
 	}
 	smcc.keys++
 	smcc.data.Store(key, void)
-
+	// 单独运行线程，让其提升
+	go smcc.lruList.KeyUp(key)
 }
 
 // Get 获取一个值
@@ -136,19 +190,108 @@ func (smcc *syncMapCacheImpl) Keys() int64 {
 	return smcc.keys
 }
 
+// 内存溢出处理方法
+func (smcc *syncMapCacheImpl) memoryhandle() bool {
+	var m runtime.MemStats   // 声明一个m
+	runtime.ReadMemStats(&m) // 读取运行内存到m
+	if m.Alloc > smcc.memorySize {
+		// 清楚过期变量
+		smcc.rangeClearExpireVar()
+	}
+
+	// 删除不常用元素，直到当前运行内存小于设定阈值
+	for runtime.ReadMemStats(&m); m.Alloc > smcc.memorySize; runtime.ReadMemStats(&m) {
+		if smcc.keys == 0 {
+			return false
+		}
+		smcc.deleteLRU()
+		// 清理内存
+		runtime.GC()
+	}
+	return true
+
+}
+
 // 遍历map清楚所有过期元素
 func (smcc *syncMapCacheImpl) rangeClearExpireVar() {
+	newData := sync.Map{}
+	var keys int64
 	// 获取当前时间
 	currentTimeUnix := time.Now().Unix()
 	// 判断是否有过期变量
 	smcc.data.Range(func(key, val interface{}) bool {
 		e := val.(entry)
 		if e.expireTime > currentTimeUnix {
-			return true
+			keys++
+			newData.Store(key, e)
 		}
-		// 删除过期变量
-		smcc.Del(key.(string))
 		return true
 	})
 
+	smcc.data = newData
+	smcc.keys = keys
+	runtime.GC()
+
+}
+func (smcc *syncMapCacheImpl) verifyExpire(key interface{}, e *entry, now int64) bool {
+	if e.expireTime < now {
+		// 删除过期变量
+		smcc.Del(key.(string))
+	}
+	return true
+}
+
+// 删除最后一个变量元素
+func (smcc *syncMapCacheImpl) deleteLRU() {
+	key := smcc.lruList.RemoveBack()
+	smcc.keys--
+	smcc.data.Delete(key)
+}
+
+// 用于定时清理缓存
+func (smcc *syncMapCacheImpl) randomVerifyExpireVar() {
+	for {
+		// 间隔1s执行一次
+		time.Sleep(1 * time.Second)
+		now := time.Now().Unix()
+		randNum := rand.Int63n(smcc.keys)
+
+		var e *list.Element
+
+		// 上锁 ，避免数据出现问题
+		smcc.lruList.m.Lock()
+		// 判断随机数大于还是小于 总数的一半
+		if randNum > smcc.keys/2 {
+			// 从后往前遍历
+			e = smcc.lruList.l.Back()
+			for j := smcc.keys; j >= randNum; j-- {
+				e = e.Prev()
+			}
+		} else {
+			// 从前往后遍历
+			e = smcc.lruList.l.Front()
+			for j := int64(0); j < randNum; j++ {
+				e = e.Next()
+			}
+		}
+		// 解锁，防止卡锁
+		smcc.lruList.m.Unlock()
+
+		// 开始对随机抽中的key进行遍历管理
+		for i := randNum; i < smcc.keys && i < randNum+5; i++ {
+			// 获取key
+			key := e.Value
+			// 通过 key 读取存放的entry
+			v, ok := smcc.data.Load(key)
+			// 判断是否存在
+			if !ok {
+				continue
+			}
+			tmp := v.(entry)
+			// 验证是否过期
+			smcc.verifyExpire(key, &tmp, now)
+			// 继续向下执行
+			e = e.Next()
+		}
+	}
 }
