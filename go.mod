@@ -1,4 +1,4 @@
-module SimpleCacheSys
+module simplecachesys
 
 go 1.14
 

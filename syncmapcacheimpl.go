@@ -108,7 +108,8 @@ func InitSyncMapCacheImpl() *syncMapCacheImpl {
 }
 
 // SetMaxMemory 设置最大内存
-// 当前自定义中 b = bytes 不使用Bit
+// 当前自定义中 B = bytes
+// eg "100KB" = 100 * 1024
 func (smcc *syncMapCacheImpl) SetMaxMemory(size string) bool {
 
 	size = strings.ToLower(strings.TrimSpace(size))
@@ -118,6 +119,7 @@ func (smcc *syncMapCacheImpl) SetMaxMemory(size string) bool {
 	// 转换成int64类型
 	num, err := strconv.ParseUint(numStr, 10, 64)
 	if err != nil {
+		fmt.Println("输入有误,请匹配当前表达式 ^\\d+[TGMK]{0,1}B$")
 		return false
 	}
 	// 切割单位
@@ -132,8 +134,10 @@ func (smcc *syncMapCacheImpl) SetMaxMemory(size string) bool {
 		smcc.memorySize = num * MB
 	case "kb":
 		smcc.memorySize = num * KB
+	case "b":
+		smcc.memorySize = num * B
 	default:
-		fmt.Println("使用了未定义的类型,请以 kb, mb, gb, tb 结尾")
+		fmt.Println("使用了未定义的类型,请以 kb, mb, gb, tb, b结尾")
 		return false
 	}
 

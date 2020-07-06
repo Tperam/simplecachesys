@@ -106,3 +106,8 @@ type Cache interface {
 ### 1. 当删除Map中的key之后，gc只会回收value。
 
 解决方法:  重构map。将原有map删除使用新的map进行其他操作
+
+
+## 使用方法
+
+### InitSyncMapCacheImpl 用于初始化

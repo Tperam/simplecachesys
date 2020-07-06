@@ -8,11 +8,11 @@ import (
 
 func TestSyncMap(t *testing.T) {
 	cache := InitSyncMapCacheImpl()
-
+	cache.SetMaxMemory("asbkB")
 	insertData(0, 1000, cache, 5*time.Second)
 
 	fmt.Println(cache.Get(string(1)))
-	fmt.Println(cache.Get(string(10)))
+	fmt.Println(cache.Get(string(800)))
 
 	time.Sleep(6 * time.Second)
 

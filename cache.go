@@ -24,6 +24,7 @@ type Cache interface {
 
 // 单位换算
 const (
+	B  = 1
 	KB = 1024
 	MB = KB * 1024
 	GB = MB * 1024
