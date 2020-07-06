@@ -20,9 +20,11 @@ func TestSyncMap(t *testing.T) {
 	fmt.Println("输出key为string(1)是否存在", cache.Exists(string(1)))
 
 	insertData(0, 1000, cache, 5*time.Second)
+	var i int64
 	cache.data.Range(func(key, value interface{}) bool {
+		i++
 		val := (value.(entry)).val
-		fmt.Println(key.(string), val)
+		fmt.Println(i, key.(string), val)
 		return true
 	})
 	cache.Flush()

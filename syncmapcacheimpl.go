@@ -37,7 +37,7 @@ type syncMapCacheImpl struct {
 	memorySize uint64
 
 	// 存放数据
-	data sync.Map
+	data *sync.Map
 
 	// LRU 淘汰策略存储的map
 	lruList LRUList
@@ -81,11 +81,25 @@ func (lru *LRUList) RemoveBack() interface{} {
 	return lru.l.Remove(lastEle)
 }
 
+// Remove 删除指定元素
+func (lru *LRUList) Remove(key interface{}) {
+	e := lru.l.Front()
+	for ; e != nil; e = e.Next() {
+		if e.Value == key {
+			break
+		}
+	}
+	if e == nil {
+		return
+	}
+	lru.l.Remove(e)
+}
+
 // InitSyncMapCacheImpl 初始化Cache实现类
 func InitSyncMapCacheImpl() *syncMapCacheImpl {
 	smcc := syncMapCacheImpl{
-		memorySize: 500 * MB,
-		data:       sync.Map{},
+		memorySize: 500 * KB,
+		data:       &sync.Map{},
 	}
 
 	go smcc.randomVerifyExpireVar()
@@ -156,7 +170,7 @@ func (smcc *syncMapCacheImpl) Get(key string) (interface{}, bool) {
 	e := v.(entry)
 	// 判断是否是过期数据
 	if e.expireTime < time.Now().Unix() {
-		smcc.data.Delete(key)
+		smcc.delete(key)
 		return nil, false
 	}
 
@@ -165,9 +179,7 @@ func (smcc *syncMapCacheImpl) Get(key string) (interface{}, bool) {
 
 // Del 删除一个值
 func (smcc *syncMapCacheImpl) Del(key string) bool {
-	smcc.keys--
-	smcc.data.Delete(key)
-	return true
+	return smcc.delete(key)
 }
 
 // Exists 检测一个值 是否存在
@@ -179,7 +191,7 @@ func (smcc *syncMapCacheImpl) Exists(key string) bool {
 // Flush 清空所有值
 func (smcc *syncMapCacheImpl) Flush() bool {
 	// 清空 sync.map
-	smcc.data = sync.Map{}
+	smcc.data = &sync.Map{}
 	smcc.keys = 0
 	return true
 }
@@ -188,6 +200,13 @@ func (smcc *syncMapCacheImpl) Flush() bool {
 func (smcc *syncMapCacheImpl) Keys() int64 {
 	smcc.rangeClearExpireVar()
 	return smcc.keys
+}
+
+func (smcc *syncMapCacheImpl) delete(key interface{}) bool {
+	smcc.keys--
+	smcc.data.Delete(key)
+	smcc.lruList.Remove(key)
+	return true
 }
 
 // 内存溢出处理方法
@@ -205,8 +224,6 @@ func (smcc *syncMapCacheImpl) memoryhandle() bool {
 			return false
 		}
 		smcc.deleteLRU()
-		// 清理内存
-		runtime.GC()
 	}
 	return true
 
@@ -223,22 +240,17 @@ func (smcc *syncMapCacheImpl) rangeClearExpireVar() {
 		e := val.(entry)
 		if e.expireTime > currentTimeUnix {
 			keys++
-			newData.Store(key, e)
+			newData.Store(key, val)
+		} else {
+			smcc.lruList.Remove(key)
 		}
 		return true
 	})
 
-	smcc.data = newData
+	smcc.data = &newData
 	smcc.keys = keys
 	runtime.GC()
 
-}
-func (smcc *syncMapCacheImpl) verifyExpire(key interface{}, e *entry, now int64) bool {
-	if e.expireTime < now {
-		// 删除过期变量
-		smcc.Del(key.(string))
-	}
-	return true
 }
 
 // 删除最后一个变量元素
@@ -246,6 +258,7 @@ func (smcc *syncMapCacheImpl) deleteLRU() {
 	key := smcc.lruList.RemoveBack()
 	smcc.keys--
 	smcc.data.Delete(key)
+	smcc.rangeClearExpireVar()
 }
 
 // 用于定时清理缓存
@@ -278,7 +291,7 @@ func (smcc *syncMapCacheImpl) randomVerifyExpireVar() {
 		smcc.lruList.m.Unlock()
 
 		// 开始对随机抽中的key进行遍历管理
-		for i := randNum; i < smcc.keys && i < randNum+5; i++ {
+		for i := randNum; i < smcc.keys && i < randNum+5 && e != nil; i++ {
 			// 获取key
 			key := e.Value
 			// 通过 key 读取存放的entry
@@ -289,7 +302,10 @@ func (smcc *syncMapCacheImpl) randomVerifyExpireVar() {
 			}
 			tmp := v.(entry)
 			// 验证是否过期
-			smcc.verifyExpire(key, &tmp, now)
+			if tmp.expireTime < now {
+				// 删除过期变量
+				smcc.delete(key)
+			}
 			// 继续向下执行
 			e = e.Next()
 		}
