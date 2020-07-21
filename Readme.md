@@ -47,8 +47,7 @@ type Cache interface {
           // 如果超出内存，则执行某某某操作( LRU、强行遍历全部内存清楚所有定时属性 )
       }
   }()
-```
-  
+  ```
 单线程思路:
   
   ```go
@@ -111,3 +110,4 @@ type Cache interface {
 ## 使用方法
 
 ### InitSyncMapCacheImpl 用于初始化
+
