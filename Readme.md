@@ -111,3 +111,11 @@ type Cache interface {
 
 ### InitSyncMapCacheImpl 用于初始化
 
+
+## 后续优化
+
+1. 往 0 gc 靠拢。
+2. 是否可以使用分布式锁？
+  > 参考[freecache](https://github.com/coocood/freecache) [bigcache](https://github.com/allegro/bigcache) [fastcache](https://github.com/VictoriaMetrics/fastcache)
+  以上都是非常棒的开源库，可用于学习。
+  
